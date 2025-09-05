@@ -2,9 +2,11 @@
 import argparse
 import sys
 import json
+import random
 import numpy as np
 
 from grid import parse_ascii, objective_auto, penalties, auto_weights, NpBoard
+from neighbors import enumerate_neighbors
 
 # ------------------------------------------------------------
 # Wejście planszy
@@ -117,6 +119,10 @@ def main():
     # ... w argparse:
     ap.add_argument("--explain-digits", action="store_true",
                     help="Wypisz analizę każdej cyfry: pozycja, wartość, sąsiedzi, diff.")
+    ap.add_argument("--neighbors", type=int, default=0,
+                       help="Wypisz N sąsiadów bieżącego rozwiązania i zakończ (bez uruchamiania solvera).")
+    ap.add_argument("--neighbors-strict", action="store_true",
+                        help="Generuj sąsiadów z twardym zakazem konfliktów bulb-bulb.")
     args = ap.parse_args()
 
     # Plansza
@@ -182,6 +188,23 @@ def main():
             print(f"weights:      conflict={wC}, digit={wD}, unlit={wU}")
         print(f"bulbs_count:  {int(bulbs_mask.sum())}")
         print(f"size:         {board.H} x {board.W}")
+
+    if args.neighbors > 0:
+        rng = random.Random(getattr(args, "seed", None))
+        out = []
+        k = 0
+        for cand in enumerate_neighbors(board, set(bulbs),
+                                        max_neighbors=args.neighbors,
+                                        rng=rng,
+                                        use_strict=args.neighbors_strict,
+                                        with_repairs=True):
+            score = objective_auto(board, set(cand))
+            out.append({"bulbs": sorted(cand), "score": score})
+            k += 1
+            if k >= args.neighbors:
+                break
+        print(json.dumps(out))
+        return  # zakończ program po wypisaniu sąsiadów
 
 if __name__ == "__main__":
     main()
