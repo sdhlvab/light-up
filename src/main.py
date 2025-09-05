@@ -7,6 +7,7 @@ import numpy as np
 
 from grid import parse_ascii, objective_auto, penalties, auto_weights, NpBoard
 from neighbors import enumerate_neighbors, bulbs_set_to_mask
+from random_init import random_bulbs_mask, random_solution
 
 # ------------------------------------------------------------
 # Wejście planszy
@@ -123,6 +124,11 @@ def main():
                        help="Wypisz N sąsiadów bieżącego rozwiązania i zakończ (bez uruchamiania solvera).")
     ap.add_argument("--neighbors-strict", action="store_true",
                         help="Generuj sąsiadów z twardym zakazem konfliktów bulb-bulb.")
+    ap.add_argument("--init-mode", choices=["soft", "strict", "digit_greedy"], default="soft",
+                    help="Tryb losowej inicjalizacji: soft/strict/digit_greedy (gdy używasz --rand).")
+    ap.add_argument("--fill", type=float, default=None,
+                    help="Docelowy udział żarówek na pustych polach (zastępuje --rand).")
+
     args = ap.parse_args()
 
     # Plansza
@@ -191,8 +197,8 @@ def main():
 
     if args.neighbors > 0:
         rng = random.Random(getattr(args, "seed", None))
+        base_score = int(score)  # score z bieżącej konfiguracji
         out = []
-        k = 0
         bulbs = {(int(y), int(x)) for y, x in np.argwhere(bulbs_mask)}
         for cand in enumerate_neighbors(board, bulbs,
                                         max_neighbors=args.neighbors,
@@ -200,13 +206,20 @@ def main():
                                         use_strict=args.neighbors_strict,
                                         with_repairs=True):
             cand_mask = bulbs_set_to_mask(board, cand)
-            score = objective_auto(board, cand_mask)
-            out.append({"bulbs": sorted(cand), "score": score})
-            k += 1
-            if k >= args.neighbors:
-                break
-        print(json.dumps(out))
-        return  # zakończ program po wypisaniu sąsiadów
+            c2, d2, u2 = penalties(board, cand_mask)
+            s2 = int(auto_weights(board)[0] * c2 + auto_weights(board)[1] * d2 + auto_weights(board)[2] * u2)
+            out.append({
+                "bulbs": sorted(cand),
+                "score": s2,
+                "delta": int(s2 - base_score),
+                "conflicts": int(c2),
+                "digit_errors": int(d2),
+                "unlit": int(u2),
+            })
+        # sortuj rosnąco po score (lepsze pierwsze)
+        out.sort(key=lambda e: e["score"])
+        print(json.dumps(out, ensure_ascii=False))
+        return
 
 if __name__ == "__main__":
     main()
