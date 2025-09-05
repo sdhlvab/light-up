@@ -1,0 +1,21 @@
+@'
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# virtual env
+.venv/
+venv/
+ENV/
+env/
+Lib/
+Scripts/
+pyvenv.cfg
+
+# IDE/OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
