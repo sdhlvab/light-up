@@ -1,80 +1,104 @@
 from __future__ import annotations
-from typing import Iterator, List, Optional, Set, Tuple, Callable
+from typing import Iterator, List, Optional, Set, Tuple, Callable, Any
 import random
+import numpy as np
 
 Coord = Tuple[int, int]  # (y, x)
 
+
 # ──────────────────────────────────────────────────────────────────────────────
-# Podstawowe operacje na planszy
+# Abstrakcja planszy: działa z NpBoard (z grid.py) i z List[str]
 # ──────────────────────────────────────────────────────────────────────────────
 
-def in_bounds(board: List[str], y: int, x: int) -> bool:
-    return 0 <= y < len(board) and 0 <= x < len(board[0])
+def _get_size(board: Any) -> Tuple[int, int]:
+    if hasattr(board, "H") and hasattr(board, "W"):  # NpBoard
+        return int(board.H), int(board.W)
+    return len(board), len(board[0])  # List[str]
 
-def is_wall(board: List[str], y: int, x: int) -> bool:
-    return board[y][x] == '#'
+def _in_bounds(board: Any, y: int, x: int) -> bool:
+    H, W = _get_size(board)
+    return 0 <= y < H and 0 <= x < W
 
-def is_digit(board: List[str], y: int, x: int) -> bool:
-    return board[y][x].isdigit()
+def _is_wall(board: Any, y: int, x: int) -> bool:
+    if hasattr(board, "wall_mask"):        # NpBoard
+        return bool(board.wall_mask[y, x])
+    return board[y][x] == '#'              # List[str]
 
-def is_empty(board: List[str], y: int, x: int) -> bool:
-    return board[y][x] == '.'
+def _is_digit(board: Any, y: int, x: int) -> bool:
+    if hasattr(board, "digit_mask"):       # NpBoard
+        return bool(board.digit_mask[y, x])
+    return board[y][x].isdigit()           # List[str]
+
+def _is_empty(board: Any, y: int, x: int) -> bool:
+    if hasattr(board, "empty_mask"):       # NpBoard
+        return bool(board.empty_mask[y, x])
+    return board[y][x] == '.'              # List[str]
 
 def neighbors4(y: int, x: int) -> List[Coord]:
-    return [(y-1,x), (y+1,x), (y,x-1), (y,x+1)]
+    return [(y-1, x), (y+1, x), (y, x-1), (y, x+1)]
 
-def free_adjacent_empty(board: List[str], bulbs: Set[Coord], y: int, x: int) -> List[Coord]:
-    out = []
+def _free_adjacent_empty(board: Any, bulbs: Set[Coord], y: int, x: int) -> List[Coord]:
+    out: List[Coord] = []
     for ny, nx in neighbors4(y, x):
-        if in_bounds(board, ny, nx) and is_empty(board, ny, nx) and (ny, nx) not in bulbs:
+        if _in_bounds(board, ny, nx) and _is_empty(board, ny, nx) and (ny, nx) not in bulbs:
             out.append((ny, nx))
     return out
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Miękko/twardo: czy wolno postawić żarówkę
 # ──────────────────────────────────────────────────────────────────────────────
 
-def is_placeable_soft(board: List[str], y: int, x: int) -> bool:
+def _is_placeable_soft(board: Any, y: int, x: int) -> bool:
     # Dopuszczamy stany niepoprawne (kolizje bulb-bulb oceni funkcja celu)
-    return in_bounds(board, y, x) and is_empty(board, y, x)
+    return _in_bounds(board, y, x) and _is_empty(board, y, x)
 
-def is_placeable_strict(board: List[str], bulbs: Set[Coord], y: int, x: int) -> bool:
+def _is_placeable_strict(board: Any, bulbs: Set[Coord], y: int, x: int) -> bool:
     # Zakaz ścian/cyfr + brak żarówki "w linii wzroku" do najbliższej ściany
-    if not is_placeable_soft(board, y, x):
+    if not _is_placeable_soft(board, y, x):
         return False
-    H, W = len(board), len(board[0])
+    H, W = _get_size(board)
 
+    # góra
     ty = y - 1
-    while ty >= 0 and not is_wall(board, ty, x):
-        if (ty, x) in bulbs: return False
+    while ty >= 0 and not _is_wall(board, ty, x):
+        if (ty, x) in bulbs:
+            return False
         ty -= 1
+    # dół
     ty = y + 1
-    while ty < H and not is_wall(board, ty, x):
-        if (ty, x) in bulbs: return False
+    while ty < H and not _is_wall(board, ty, x):
+        if (ty, x) in bulbs:
+            return False
         ty += 1
+    # lewo
     tx = x - 1
-    while tx >= 0 and not is_wall(board, y, tx):
-        if (y, tx) in bulbs: return False
+    while tx >= 0 and not _is_wall(board, y, tx):
+        if (y, tx) in bulbs:
+            return False
         tx -= 1
+    # prawo
     tx = x + 1
-    while tx < W and not is_wall(board, y, tx):
-        if (y, tx) in bulbs: return False
+    while tx < W and not _is_wall(board, y, tx):
+        if (y, tx) in bulbs:
+            return False
         tx += 1
     return True
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Ruchy elementarne
 # ──────────────────────────────────────────────────────────────────────────────
 
-def op_add_random(board: List[str], bulbs: Set[Coord], rng: random.Random,
+def op_add_random(board: Any, bulbs: Set[Coord], rng: random.Random,
                   strict: bool = False) -> Optional[Set[Coord]]:
-    H, W = len(board), len(board[0])
-    candidates = []
+    H, W = _get_size(board)
+    candidates: List[Coord] = []
     for y in range(H):
         for x in range(W):
             if (y, x) in bulbs:
                 continue
-            ok = is_placeable_strict(board, bulbs, y, x) if strict else is_placeable_soft(board, y, x)
+            ok = _is_placeable_strict(board, bulbs, y, x) if strict else _is_placeable_soft(board, y, x)
             if ok:
                 candidates.append((y, x))
     if not candidates:
@@ -84,7 +108,7 @@ def op_add_random(board: List[str], bulbs: Set[Coord], rng: random.Random,
     new_bulbs.add((y, x))
     return new_bulbs
 
-def op_remove_random(board: List[str], bulbs: Set[Coord], rng: random.Random) -> Optional[Set[Coord]]:
+def op_remove_random(board: Any, bulbs: Set[Coord], rng: random.Random) -> Optional[Set[Coord]]:
     if not bulbs:
         return None
     rem = rng.choice(tuple(bulbs))
@@ -92,20 +116,20 @@ def op_remove_random(board: List[str], bulbs: Set[Coord], rng: random.Random) ->
     new_bulbs.remove(rem)
     return new_bulbs
 
-def op_move_random(board: List[str], bulbs: Set[Coord], rng: random.Random,
+def op_move_random(board: Any, bulbs: Set[Coord], rng: random.Random,
                    radius: int = 1, strict: bool = False) -> Optional[Set[Coord]]:
     if not bulbs:
         return None
     by, bx = rng.choice(tuple(bulbs))
-    candidates = []
+    candidates: List[Coord] = []
     for dy in range(-radius, radius + 1):
         for dx in range(-radius, radius + 1):
             if abs(dy) + abs(dx) == 0 or abs(dy) + abs(dx) > radius:
                 continue
             ny, nx = by + dy, bx + dx
-            if not in_bounds(board, ny, nx) or (ny, nx) in bulbs:
+            if not _in_bounds(board, ny, nx) or (ny, nx) in bulbs:
                 continue
-            ok = is_placeable_strict(board, bulbs - {(by, bx)}, ny, nx) if strict else is_placeable_soft(board, ny, nx)
+            ok = _is_placeable_strict(board, bulbs - {(by, bx)}, ny, nx) if strict else _is_placeable_soft(board, ny, nx)
             if ok:
                 candidates.append((ny, nx))
     if not candidates:
@@ -116,15 +140,15 @@ def op_move_random(board: List[str], bulbs: Set[Coord], rng: random.Random,
     new_bulbs.add((ny, nx))
     return new_bulbs
 
-def op_toggle_random(board: List[str], bulbs: Set[Coord], rng: random.Random,
+def op_toggle_random(board: Any, bulbs: Set[Coord], rng: random.Random,
                      strict: bool = False) -> Optional[Set[Coord]]:
-    H, W = len(board), len(board[0])
-    pool = set(bulbs)
+    H, W = _get_size(board)
+    pool: Set[Coord] = set(bulbs)
     for y in range(H):
         for x in range(W):
             if (y, x) in bulbs:
                 continue
-            ok = is_placeable_strict(board, bulbs, y, x) if strict else is_placeable_soft(board, y, x)
+            ok = _is_placeable_strict(board, bulbs, y, x) if strict else _is_placeable_soft(board, y, x)
             if ok:
                 pool.add((y, x))
     if not pool:
@@ -137,26 +161,31 @@ def op_toggle_random(board: List[str], bulbs: Set[Coord], rng: random.Random,
         new_bulbs.add((y, x))
     return new_bulbs
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # “Lokalne naprawy” przy cyfrach – szybkie domykanie ograniczeń
 # ──────────────────────────────────────────────────────────────────────────────
 
-def digit_need(board: List[str], bulbs: Set[Coord], y: int, x: int) -> Tuple[int, int]:
-    target = int(board[y][x])
+def _digit_need(board: Any, bulbs: Set[Coord], y: int, x: int) -> Tuple[int, int]:
+    """Zwraca (need, have) dla cyfry na (y,x)."""
+    if hasattr(board, "digit_val"):
+        target = int(board.digit_val[y, x])      # NpBoard
+    else:
+        target = int(board[y][x])                # List[str]
     adj = neighbors4(y, x)
-    have = sum((ny, nx) in bulbs for ny, nx in adj if in_bounds(board, ny, nx))
+    have = sum((ny, nx) in bulbs for ny, nx in adj if _in_bounds(board, ny, nx))
     need = target - have
     return need, have
 
-def op_digit_repair_add(board: List[str], bulbs: Set[Coord], rng: random.Random) -> Optional[Set[Coord]]:
+def op_digit_repair_add(board: Any, bulbs: Set[Coord], rng: random.Random) -> Optional[Set[Coord]]:
+    H, W = _get_size(board)
     candidates: List[Tuple[Coord, List[Coord]]] = []
-    H, W = len(board), len(board[0])
     for y in range(H):
         for x in range(W):
-            if is_digit(board, y, x):
-                need, _ = digit_need(board, bulbs, y, x)
+            if _is_digit(board, y, x):
+                need, _ = _digit_need(board, bulbs, y, x)
                 if need > 0:
-                    frees = free_adjacent_empty(board, bulbs, y, x)
+                    frees = _free_adjacent_empty(board, bulbs, y, x)
                     if frees:
                         candidates.append(((y, x), frees))
     if not candidates:
@@ -167,16 +196,16 @@ def op_digit_repair_add(board: List[str], bulbs: Set[Coord], rng: random.Random)
     new_bulbs.add((ny, nx))
     return new_bulbs
 
-def op_digit_repair_remove(board: List[str], bulbs: Set[Coord], rng: random.Random) -> Optional[Set[Coord]]:
+def op_digit_repair_remove(board: Any, bulbs: Set[Coord], rng: random.Random) -> Optional[Set[Coord]]:
+    H, W = _get_size(board)
     victims: List[Coord] = []
-    H, W = len(board), len(board[0])
     for y in range(H):
         for x in range(W):
-            if is_digit(board, y, x):
-                need, _ = digit_need(board, bulbs, y, x)
+            if _is_digit(board, y, x):
+                need, _ = _digit_need(board, bulbs, y, x)
                 if need < 0:  # za dużo żarówek obok cyfry
                     for ny, nx in neighbors4(y, x):
-                        if in_bounds(board, ny, nx) and (ny, nx) in bulbs:
+                        if _in_bounds(board, ny, nx) and (ny, nx) in bulbs:
                             victims.append((ny, nx))
     if not victims:
         return None
@@ -185,11 +214,12 @@ def op_digit_repair_remove(board: List[str], bulbs: Set[Coord], rng: random.Rand
     new_bulbs.remove(rem)
     return new_bulbs
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Interfejs 1: enumerator – wiele sąsiadów (HC / Tabu)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def enumerate_neighbors(board: List[str],
+def enumerate_neighbors(board: Any,
                         bulbs: Set[Coord],
                         max_neighbors: int = 50,
                         rng: Optional[random.Random] = None,
@@ -225,11 +255,12 @@ def enumerate_neighbors(board: List[str],
                 produced += 1
                 yield cand
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Interfejs 2: proposer – jeden sąsiad (SA)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def propose_neighbor(board: List[str],
+def propose_neighbor(board: Any,
                      bulbs: Set[Coord],
                      rng: Optional[random.Random] = None,
                      temperature: float = 1.0,
@@ -266,3 +297,16 @@ def propose_neighbor(board: List[str],
                     return cand
                 break
     return set(bulbs)  # awaryjnie: brak zmiany
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helper: set[(y,x)] -> maska bool HxW (dla objective_auto)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def bulbs_set_to_mask(board: Any, bulbs_set: Set[Coord]) -> np.ndarray:
+    H, W = _get_size(board)
+    mask = np.zeros((H, W), dtype=bool)
+    for y, x in bulbs_set:
+        if 0 <= y < H and 0 <= x < W:
+            mask[y, x] = True
+    return mask

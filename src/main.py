@@ -6,7 +6,7 @@ import random
 import numpy as np
 
 from grid import parse_ascii, objective_auto, penalties, auto_weights, NpBoard
-from neighbors import enumerate_neighbors
+from neighbors import enumerate_neighbors, bulbs_set_to_mask
 
 # ------------------------------------------------------------
 # Wejście planszy
@@ -184,7 +184,7 @@ def main():
         print(f"conflicts:    {c}")
         print(f"digit_errors: {d}")
         print(f"unlit:        {u}")
-        if args.show-weights:
+        if args.show_weights:
             print(f"weights:      conflict={wC}, digit={wD}, unlit={wU}")
         print(f"bulbs_count:  {int(bulbs_mask.sum())}")
         print(f"size:         {board.H} x {board.W}")
@@ -193,12 +193,14 @@ def main():
         rng = random.Random(getattr(args, "seed", None))
         out = []
         k = 0
-        for cand in enumerate_neighbors(board, set(bulbs),
+        bulbs = {(int(y), int(x)) for y, x in np.argwhere(bulbs_mask)}
+        for cand in enumerate_neighbors(board, bulbs,
                                         max_neighbors=args.neighbors,
                                         rng=rng,
                                         use_strict=args.neighbors_strict,
                                         with_repairs=True):
-            score = objective_auto(board, set(cand))
+            cand_mask = bulbs_set_to_mask(board, cand)
+            score = objective_auto(board, cand_mask)
             out.append({"bulbs": sorted(cand), "score": score})
             k += 1
             if k >= args.neighbors:
