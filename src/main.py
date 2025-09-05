@@ -8,6 +8,7 @@ import numpy as np
 from grid import parse_ascii, objective_auto, penalties, auto_weights, NpBoard
 from neighbors import enumerate_neighbors, bulbs_set_to_mask
 from random_init import random_bulbs_mask, random_solution
+from solve_zero import solve_zero
 
 # ------------------------------------------------------------
 # Wejście planszy
@@ -128,6 +129,16 @@ def main():
                     help="Tryb losowej inicjalizacji: soft/strict/digit_greedy (gdy używasz --rand).")
     ap.add_argument("--fill", type=float, default=None,
                     help="Docelowy udział żarówek na pustych polach (zastępuje --rand).")
+    ap.add_argument("--solve-zero", action="store_true",
+                    help="Znajdź rozwiązanie o score=0 i wypisz tylko metryki (bez pozycji żarówek).")
+    ap.add_argument("--max-iters", type=int, default=200_000,
+                    help="Limit iteracji dla --solve-zero.")
+    ap.add_argument("--temperature", type=float, default=1.0,
+                    help="Temperatura początkowa dla --solve-zero (SA).")
+    ap.add_argument("--cooling", type=float, default=0.9995,
+                    help="Współczynnik chłodzenia dla --solve-zero (SA).")
+    ap.add_argument("--out-bulbs", type=str, default=None,
+                    help="Opcjonalna ścieżka do zapisu rozwiązania (JSON z kluczem 'bulbs': [[y,x],...]).")
 
     args = ap.parse_args()
 
@@ -135,12 +146,23 @@ def main():
     board = load_board(args.board)
 
     # Żarówki: priorytet -> --bulbs, potem --rand, w przeciwnym razie brak żarówek
+    # 1) Jawny plik z żarówkami
     if args.bulbs:
         bulbs_mask = load_bulbs_mask(args.bulbs, board.H, board.W, coords_are_xy=args.xy)
+
+    # 2) Losowy start (z nowego modułu)
+    elif args.fill is not None:
+        if not (0.0 <= args.fill <= 1.0):
+            ap.error("--fill musi być w przedziale [0,1].")
+        bulbs_mask, _ = random_solution(board, mode=args.init_mode, fill_ratio=args.fill, seed=args.seed)
+
     elif args.rand is not None:
+        # wsteczna kompatybilność z Twoją starą flagą --rand
         if not (0.0 <= args.rand <= 1.0):
             ap.error("--rand musi być w przedziale [0,1].")
+        # zachowanie jak poprzednio: 'soft'
         bulbs_mask = random_bulbs_mask(board, args.rand, seed=args.seed)
+
     else:
         bulbs_mask = np.zeros((board.H, board.W), dtype=bool)
 
@@ -194,6 +216,54 @@ def main():
             print(f"weights:      conflict={wC}, digit={wD}, unlit={wU}")
         print(f"bulbs_count:  {int(bulbs_mask.sum())}")
         print(f"size:         {board.H} x {board.W}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tryb: szukaj rozwiązania score=0 (SA/HC)
+    # ─────────────────────────────────────────────────────────────────────────
+    if args.solve_zero:
+        # Ustal parametry inicjalizacji (domyślnie bierzemy --fill, jak nie ma: oszacuj z planszy)
+        if args.fill is None:
+            # lekkie domyślne zagęszczenie dla startu
+            fill_ratio = 0.08
+        else:
+            if not (0.0 <= args.fill <= 1.0):
+                ap.error("--fill musi być w przedziale [0,1].")
+            fill_ratio = args.fill
+
+        bulbs_set, iters, final_score = solve_zero(
+            board,
+            init_mode=args.init_mode,
+            fill_ratio=fill_ratio,
+            seed=args.seed,
+            max_iters=args.max_iters,
+            temperature=args.temperature,
+            cooling=args.cooling,
+            strict_neighbors=args.neighbors_strict,
+        )
+
+        # policz metryki końcowe (bez wypisywania pozycji)
+        bulbs_mask_final = bulbs_set_to_mask(board, bulbs_set)
+        c2, d2, u2 = penalties(board, bulbs_mask_final)
+        bulbs_count = int(bulbs_mask_final.sum())
+
+        # stdout: tylko metryki
+        print(f"solve_zero:   {'SUCCESS' if final_score == 0 else 'FAILED'}")
+        print(f"iterations:   {iters}")
+        print(f"score:        {final_score}")
+        print(f"conflicts:    {c2}")
+        print(f"digit_errors: {d2}")
+        print(f"unlit:        {u2}")
+        print(f"bulbs_count:  {bulbs_count}")
+
+        # zapis do pliku (bez pokazywania w stdout)
+        if args.out_bulbs:
+            with open(args.out_bulbs, "w", encoding="utf-8") as f:
+                js = {"bulbs": sorted([ [int(y), int(x)] for (y,x) in bulbs_set ])}
+                import json as _json
+                f.write(_json.dumps(js, ensure_ascii=False))
+            print(f"saved:        {args.out_bulbs}")
+
+        return
 
     if args.neighbors > 0:
         rng = random.Random(getattr(args, "seed", None))
